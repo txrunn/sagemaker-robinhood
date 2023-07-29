@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation template for setting up the options trading bot development environment.
+
+Parameters:
+  KeyPair:
+    Description: The EC2 Key Pair to allow SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: 9
+    MaxLength: 18
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x.
+
+Resources:
+  DataBucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: options-trading-bot-data-tarun
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+
+  TradingBotVPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  TradingBotSubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref TradingBotVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+
+  TradingBotInstanceProfile: 
+    Type: "AWS::IAM::InstanceProfile"
+    Properties: 
+      Roles: 
+        - !Ref TradingBotEC2Role
+
+  TradingBotEC2Role: 
+    Type: "AWS::IAM::Role"
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      ManagedPolicyArns: 
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+
+  TradingBotSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: Security group for trading bot instance
+      VpcId: !Ref TradingBotVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
+  TradingBotEC2Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: t2.micro
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref TradingBotInstanceProfile
+      KeyName: !Ref KeyPair
+      SubnetId: !Ref TradingBotSubnet
+      SecurityGroupIds: 
+        - !GetAtt TradingBotSecurityGroup.GroupId
+      UserData: 
+        Fn::Base64: |
+          #!/bin/bash
+          yum update -y
+          yum install -y python3 pip3 git
+
+Outputs:
+  DataBucketName:
+    Description: "Name of the S3 bucket for data storage"
+    Value: !Ref DataBucket
+  InstanceId:
+    Description: "ID of the EC2 instance for the trading bot"
+    Value: !Ref TradingBotEC2Instance
